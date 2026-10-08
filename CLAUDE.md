@@ -26,6 +26,51 @@
 - Reporte o resultado com uso de RAM/flash e os erros/warnings relevantes.
   A compilação não toca na placa; quem grava continua sendo o usuário.
 
+## Commits — Conventional Commits
+
+- Todo commit segue [Conventional Commits](https://www.conventionalcommits.org/):
+  `<tipo>(<escopo>): <descrição>`, descrição no imperativo, curta, sem ponto final.
+- Tipos: `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `build`, `ci`,
+  `chore`, `style`, `revert`.
+- Escopos usuais: `firmware`, `backend`, `docs`, `protocol`, ou o módulo
+  (`ui`, `audio`, `ws`, `stt`, `providers`).
+- Mudança incompatível (ex.: protocolo device ↔ backend): `!` após o
+  tipo/escopo e rodapé `BREAKING CHANGE: <descrição>`.
+- Exemplos: `feat(audio): stream I2S mic frames over WebSocket`,
+  `fix(ws): reconnect after WiFi drop`, `build(firmware): drop NTPClient dep`.
+
+## Documentação de funções — Doxygen
+
+- **Toda função** (firmware e backend, inclusive `static`/privadas) leva
+  comentário Doxygen com: descrição geral (`@brief`, e detalhes se preciso),
+  cada parâmetro de entrada (`@param`, com unidade/faixa quando couber) e a
+  saída (`@return`, ou `@return void`/"nenhum" quando não houver; parâmetros
+  de saída por ponteiro/referência com `@param[out]`).
+- C/C++ (no header quando houver declaração pública, senão na definição):
+
+  ```cpp
+  /**
+   * @brief Envia um frame de áudio PCM16 para o backend.
+   *
+   * @param samples Ponteiro para as amostras PCM16 mono a 16 kHz.
+   * @param count   Número de amostras em @p samples.
+   * @return true se o frame foi enviado; false se o WebSocket não está conectado.
+   */
+  bool ws_send_audio(const int16_t* samples, size_t count);
+  ```
+
+- Python (docstring no estilo Doxygen):
+
+  ```python
+  def transcribe(pcm: bytes) -> str:
+      """!
+      @brief Transcreve áudio PCM16 mono 16 kHz para texto.
+
+      @param pcm Áudio bruto PCM16 little-endian, mono, 16 kHz.
+      @return Texto transcrito; string vazia se nada foi reconhecido.
+      """
+  ```
+
 ## Hardware alvo
 
 - Referência oficial: <https://docs.m5stack.com/en/core/Gray>. Extração local
