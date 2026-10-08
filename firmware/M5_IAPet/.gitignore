@@ -6,3 +6,4 @@
 
 # local credentials (template: src/secrets.h.example)
 src/secrets.h
+compile_commands.json
