@@ -1,14 +1,24 @@
 # IAPet
 
-Assistente de voz de mesa baseado no **M5Stack Gray** (ESP32) conectado à
-Claude. O usuário segura um botão, faz uma pergunta em voz alta e a resposta
-aparece na tela. Em repouso, o dispositivo mostra o caranguejo da Claude.
+Assistente de voz de mesa baseado no **M5Stack Gray** (ESP32) conectado a um
+modelo de linguagem (LLM) de sua escolha. O usuário segura um botão, faz uma
+pergunta em voz alta e a resposta aparece na tela. Em repouso, o dispositivo
+mostra o mascote do projeto: um sábio elefante humanoide de manto (arquétipo
+"loxodonte" da fantasia) em pixel art. A gema do cajado muda de cor conforme
+o estado do assistente (azul ouvindo, amarelo pensando, verde respondendo,
+vermelho em erro); o livro que ele carrega fica fechado em repouso, é
+consultado enquanto ouve e pensa, e brilha junto com o cajado na resposta e
+no erro.
+
+![Mascote](media/mascot/preview.png)
 
 O processamento pesado (transcrição e modelo) fica num backend na rede local;
 o dispositivo só captura áudio, transmite e exibe. O backend é organizado em
-*providers*, de modo que trocar "responde perguntas" (Claude API) por "executa
-comandos" (Claude Code) seja uma troca de configuração, sem mudar o firmware
-nem o protocolo.
+*providers* **agnósticos de fornecedor**: Claude, GPT, Gemini ou modelos
+locais (Ollama, LM Studio, vLLM) são intercambiáveis por configuração, assim
+como trocar "responde perguntas" por "executa comandos" (agente). Nada no
+firmware nem no protocolo depende de um modelo específico. O Claude é usado
+*a priori* durante o desenvolvimento.
 
 > **Status:** em desenvolvimento inicial. Firmware com estrutura base e
 > configuração limpa (compila); lógica de UI/áudio/WebSocket e backend ainda
@@ -27,8 +37,8 @@ flowchart LR
     subgraph Host["Backend na LAN (software/)"]
         WSS[FastAPI /ws] --> STT[faster-whisper<br/>STT local]
         STT --> PROV[Provider]
-        PROV -->|fase 1| QA[ClaudeQAProvider<br/>Anthropic API]
-        PROV -.->|fase 3| CC[Claude Code]
+        PROV -->|fase 1| QA[Provider de Q&A<br/>Anthropic / OpenAI-compat / local]
+        PROV -.->|fase 3| AG[Provider de agente<br/>executa comandos]
     end
     WSC <-->|ws://host:8000/ws| WSS
 ```
@@ -40,7 +50,7 @@ Fluxo de uma pergunta:
 2. Soltar o botão → `{"type":"end"}` — tela "Pensando...".
 3. Backend transcreve localmente (faster-whisper), passa o texto ao provider
    ativo e responde `{"type":"answer","text":"..."}`.
-4. Device mostra a resposta (rolagem com BtnB/BtnC) e volta ao caranguejo
+4. Device mostra a resposta (rolagem com BtnB/BtnC) e volta ao mascote
    após nova pressão de BtnA ou ~20 s.
 5. Falhas retornam `{"type":"error","message":"..."}`, exibido por alguns
    segundos.
@@ -84,6 +94,7 @@ IAPet/
 │   ├── greedy-discovering-iverson.md   # plano de arquitetura e fases
 │   └── hardware-m5stack-gray.md        # referência de hardware
 ├── media/                     # imagens da documentação
+├── tools/mascot/              # gerador da pixel art do mascote
 ├── firmware/M5_IAPet/         # firmware PlatformIO (Arduino)
 │   ├── platformio.ini         # env m5stack-gray
 │   └── src/
@@ -121,9 +132,12 @@ ArduinoJson.
 - FastAPI + uvicorn, endpoint WebSocket `/ws`.
 - STT local com `faster-whisper` (modelo carregado uma vez no startup).
 - Interface `Provider.answer(text) -> str`; provider ativo escolhido via
-  `.env` (`PROVIDER=claude_qa`).
-- `.env`: `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `WHISPER_MODEL`,
-  `PROVIDER`, `HOST`, `PORT`.
+  `.env`:
+  - `anthropic_qa` — Claude (default durante o desenvolvimento);
+  - `openai_compat_qa` — qualquer endpoint compatível com a API da OpenAI
+    (OpenAI, Gemini, OpenRouter, Ollama, LM Studio, vLLM).
+- `.env`: `PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, `LLM_BASE_URL`,
+  `WHISPER_MODEL`, `HOST`, `PORT`.
 
 ```bash
 cd software
@@ -137,12 +151,12 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 | Fase | Escopo |
 |---|---|
-| 1 | Q&A por voz: mic → STT local → Claude API → texto na tela |
+| 1 | Q&A por voz: mic → STT local → LLM (qualquer provider) → texto na tela |
 | 2 | TTS: backend devolve áudio pelo mesmo WebSocket, tocado no speaker |
-| 3 | Provider Claude Code: executar comandos de verdade no host |
+| 3 | Provider de agente (ex.: Claude Code): executar comandos de verdade no host |
 
-Itens em aberto: escolha do módulo de microfone, imagem do caranguejo para o
-idle, chave da API da Claude e máquina que hospedará o backend.
+Itens em aberto: escolha do módulo de microfone, chave de API do modelo de desenvolvimento e máquina que hospedará
+o backend.
 
 ## Convenções
 

@@ -10,6 +10,17 @@
 - Decisões de arquitetura e de hardware são do usuário: proponha com
   recomendação clara, não decida sozinho mudanças de escopo.
 
+## Agnosticismo de modelo
+
+- O backend é **agnóstico de fornecedor de LLM**. O Claude é usado durante o
+  desenvolvimento, mas firmware, protocolo e o núcleo do backend não podem
+  depender dele: código específico de fornecedor fica só no seu arquivo em
+  `providers/`, e variáveis de configuração usam nomes neutros (`LLM_*`).
+- O mascote do projeto é um **elefante humanoide de manto** (arquétipo
+  "loxodonte" da fantasia, design original — não copiar arte de terceiros)
+  em pixel art, sem vínculo com marca de IA. A arte é gerada por `tools/mascot/build_mascot.py`; nunca edite
+  `mascot_data.*` à mão — altere o script e rode-o de novo.
+
 ## Gravação da placa — PROIBIDO
 
 - **Nunca grave a placa.** Quem grava é sempre o usuário.

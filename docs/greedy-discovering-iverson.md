@@ -1,4 +1,4 @@
-# Assistente remoto M5Stack Gray + Claude (Fase 1: Q&A por voz)
+# Assistente remoto M5Stack Gray + LLM (Fase 1: Q&A por voz)
 
 > Revisado em 2026-10-08: plano original foi escrito para o Core2; hardware
 > real é a **M5Stack Gray**. Referência de hardware:
@@ -9,9 +9,12 @@
 O usuário quer um assistente remoto baseado no M5Stack Gray (ESP32) que capture
 perguntas por voz, envie para um backend rodando numa máquina (PC/host sempre
 ligado), e mostre a resposta em texto na tela. O design deve ser genérico desde
-já: o backend expõe uma interface de "provider" de modelo, para que trocar entre
-"apenas responde perguntas" (Claude API) e "executa comandos de verdade" (Claude
-Code, fase futura) seja só uma troca de configuração, não um redesenho.
+já: o backend expõe uma interface de "provider" de modelo, **agnóstica de
+fornecedor**, para que trocar de modelo (Claude, GPT, Gemini, modelos locais via
+Ollama/LM Studio etc.) ou entre "apenas responde perguntas" e "executa comandos
+de verdade" (agente, fase futura) seja só uma troca de configuração, não um
+redesenho. O Claude é o modelo usado *a priori* durante o desenvolvimento, mas
+nada no firmware ou no protocolo depende dele.
 
 Decisões já fechadas com o usuário:
 - Fase 1 = somente Q&A (sem execução de comandos ainda).
@@ -19,9 +22,13 @@ Decisões já fechadas com o usuário:
 - STT local via `faster-whisper` rodando na máquina do backend (sem depender de
   nuvem).
 - TTS fica para fase 2 (texto apenas por enquanto).
-- Tela mostra o caranguejo da Claude como idle screen por padrão.
+- Backend agnóstico de modelo: nenhum fornecedor de LLM é obrigatório; o
+  modelo é escolhido no `.env`.
+- Tela mostra o mascote do projeto (um animal ainda a definir, sem vínculo com
+  nenhuma marca de IA) como idle screen por padrão.
 - Arquitetura deve ser genérica o bastante pra, no futuro, trocar o "provider"
-  por um agente que executa comandos (Claude Code) sem mudar o protocolo
+  por um agente que executa comandos (ex.: Claude Code ou outro agente) sem
+  mudar o protocolo
   dispositivo↔backend.
 
 ## Impacto do hardware (Gray vs. Core2)
@@ -69,19 +76,23 @@ IAPet/
 │   │   ├── config.h           # defines do projeto (sem credenciais)
 │   │   ├── secrets.h          # SSID/senha, host do backend (gitignored)
 │   │   ├── secrets.h.example  # template versionado
-│   │   ├── ui.cpp / ui.h      # tela (idle = caranguejo, estados, texto da resposta)
+│   │   ├── ui.cpp / ui.h      # tela (idle = mascote, estados, texto da resposta)
 │   │   ├── audio.cpp / .h     # mic I2S externo via M5.Mic, push-to-talk no BtnA
-│   │   └── ws_client.cpp / .h # cliente WebSocket (protocolo abaixo)
-│   └── include/claude_crab.h  # bitmap RGB565 em PROGMEM, gerado de um PNG
+│   │   ├── ws_client.cpp / .h # cliente WebSocket (protocolo abaixo)
+│   │   ├── mascot.cpp / .h    # renderizador do mascote (sprite 4 bpp ampliado, animação por estado)
+│   │   └── mascot_data.*      # GERADO por tools/mascot/build_mascot.py
+├── tools/mascot/build_mascot.py        # fonte da pixel art do mascote
 └── software/                           # backend Python
     ├── requirements.txt
-    ├── .env.example           # ANTHROPIC_API_KEY, WHISPER_MODEL, PROVIDER, HOST/PORT
+    ├── .env.example           # PROVIDER, LLM_MODEL, LLM_API_KEY, LLM_BASE_URL, WHISPER_MODEL, HOST/PORT
     ├── app/
     │   ├── main.py            # FastAPI, endpoint WebSocket /ws
     │   ├── stt.py             # wrapper faster-whisper (carrega modelo 1x, transcribe(bytes)->str)
     │   └── providers/
     │       ├── base.py        # interface Provider.answer(text: str) -> str
-    │       └── claude_qa.py   # ClaudeQAProvider: chama Anthropic Messages API
+    │       ├── anthropic_qa.py     # Q&A via Anthropic Messages API (Claude)
+    │       └── openai_compat_qa.py # Q&A via API compatível com OpenAI (OpenAI, Gemini,
+    │                               #   Ollama, LM Studio, vLLM, OpenRouter...)
     └── README.md              # como rodar o backend (venv, .env, uvicorn)
 ```
 
@@ -100,7 +111,7 @@ frames binários de 512 amostras (1 KB, 32 ms). Throughput 32 KB/s.
 
 Fluxo (fase 1):
 1. Boot: Gray conecta WiFi, abre WebSocket com o backend, mostra tela idle
-   (caranguejo + status WiFi/bateria).
+   (mascote + status WiFi/bateria).
 2. Usuário pressiona e segura o **BtnA físico** (G39) → dispositivo manda
    `{"type":"start"}` e começa a transmitir frames de áudio conforme são lidos
    do I2S. Nada é acumulado no device: cada frame lido é enviado.
@@ -109,7 +120,7 @@ Fluxo (fase 1):
 5. Tela muda para "Pensando...".
 6. Backend: concatena os chunks recebidos entre `start` e `end`, roda STT local
    (faster-whisper) → texto; passa o texto pro `Provider.answer(texto)`
-   configurado (fase 1 = `ClaudeQAProvider`); manda de volta
+   configurado (fase 1 = um provider de Q&A, ex.: `anthropic_qa`); manda de volta
    `{"type":"answer","text": "..."}`.
 7. Dispositivo recebe `answer`, renderiza o texto (quebra de linha automática,
    rolagem com BtnB/BtnC se não couber) até o usuário apertar BtnA de novo ou
@@ -124,8 +135,9 @@ e o JSON é parseado em RAM.
 
 Esse protocolo e a interface `Provider` já comportam a fase 2 (TTS: backend
 manda frames binários de áudio além do `answer`, device toca no DAC via
-M5Unified em streaming) e a fase 3 (trocar `ClaudeQAProvider` por um provider
-que roda Claude Code com execução de comandos) sem quebrar o contrato — isso
+M5Unified em streaming) e a fase 3 (trocar o provider de Q&A por um provider
+de agente que executa comandos — Claude Code ou equivalente) sem quebrar o
+contrato — isso
 fica documentado como roadmap, **não implementado agora**.
 
 ## Firmware (PlatformIO)
@@ -146,8 +158,15 @@ fica documentado como roadmap, **não implementado agora**.
 - Orçamento de RAM (sem PSRAM):
   - Sem sprite de tela cheia (320×240×2 = 150 KB): desenhar direto no LCD ou
     usar sprites parciais pequenos (área de texto/status).
-  - Caranguejo em PROGMEM, desenhado com `pushImage` direto da flash. Tamanho
-    alvo ≤ 160×160 (50 KB de flash, 0 de RAM).
+  - Mascote (elefante humanoide de manto, arquétipo "loxodonte") em pixel
+    art 36×40, paleta de 16 cores, 4 bpp em flash (720 B por quadro, 17
+    quadros ≈ 12 KB). Manto creme (figura de sábio); olhos com esclera e
+    pupila móvel para expressividade; livro na mão livre (fechado no
+    repouso, consultado ao ouvir/pensar, brilhando na resposta e no erro). Renderizado num canvas paletizado de 720 B de heap e
+    ampliado 4× (144×160) com `pushRotateZoom`. A cor da gema do cajado é
+    trocada na paleta por estado (2 entradas), sem quadros extras.
+    Fonte da arte: `tools/mascot/build_mascot.py` (gera os quadros, o
+    `mascot_data.*` e o preview `media/mascot/preview.png`).
   - Buffer de áudio: DMA do I2S + 1 frame de 1 KB; envio síncrono no loop.
   - Monitorar `ESP.getFreeHeap()` / `getMinFreeHeap()` em build `-D DEBUG`.
 - Validação de mudanças: `pio run` (compilação). Gravação na placa é sempre
@@ -160,20 +179,28 @@ fica documentado como roadmap, **não implementado agora**.
   configurável via `.env`), expõe `transcribe(pcm_bytes) -> str` (PCM16 16 kHz
   mono → float32).
 - `providers/base.py`: `class Provider(Protocol): def answer(self, text: str) -> str`.
-- `providers/claude_qa.py`: usa o SDK `anthropic`, manda a pergunta pro modelo
-  configurado (`.env`: `ANTHROPIC_MODEL`), sem ferramentas — só Q&A puro, com
-  system prompt pedindo respostas curtas em texto simples (sem markdown).
-- Seleção do provider ativo via `.env` (`PROVIDER=claude_qa`), já deixando o
-  ponto de extensão pronto pra um `claude_code.py` futuro.
-- `.env.example` documenta `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`,
-  `WHISPER_MODEL`, `PROVIDER`, `HOST`, `PORT`.
+- Providers de Q&A (sem ferramentas, system prompt comum pedindo respostas
+  curtas em texto simples, sem markdown):
+  - `providers/anthropic_qa.py`: SDK `anthropic` (Claude) — default durante o
+    desenvolvimento.
+  - `providers/openai_compat_qa.py`: cliente para qualquer endpoint compatível
+    com a API da OpenAI (`LLM_BASE_URL`), cobrindo OpenAI, Gemini, OpenRouter e
+    modelos locais (Ollama, LM Studio, vLLM). Novo fornecedor sem API compatível
+    = novo arquivo em `providers/`, sem tocar no resto.
+- O system prompt e as regras de resposta ficam fora dos providers (comuns a
+  todos), para que trocar de modelo não mude o comportamento do assistente.
+- Seleção do provider ativo via `.env` (`PROVIDER=anthropic_qa`), já deixando o
+  ponto de extensão pronto pra um provider de agente futuro.
+- `.env.example` documenta `PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`,
+  `LLM_BASE_URL`, `WHISPER_MODEL`, `HOST`, `PORT` — nomes neutros, sem
+  variáveis específicas de fornecedor.
 
 ## Itens em aberto
 
 - **Microfone externo**: escolher o módulo I2S e confirmar pinagem (bloqueia
   `audio.cpp` e o teste ponta a ponta; não bloqueia scaffold, UI, WS e backend).
-- Imagem do caranguejo (asset) pra converter em bitmap.
-- Chave de API da Claude (`ANTHROPIC_API_KEY`) pro `.env` do backend.
+- Chave de API do modelo usado no desenvolvimento (`LLM_API_KEY`) pro `.env`
+  do backend.
 - Qual máquina vai rodar o backend (sempre ligada e acessível na rede local) —
   o endereço é só configuração em `secrets.h`.
 
@@ -183,9 +210,9 @@ fica documentado como roadmap, **não implementado agora**.
    requirements.txt`, configurar `.env`, rodar `uvicorn app.main:app --reload`,
    testar `/ws` com um script Python mandando `start` / um WAV 16 kHz em chunks
    / `end` e conferindo que volta um `answer` coerente.
-2. **Firmware isolado**: `pio run` compila (Claude valida aqui). Gravação e
+2. **Firmware isolado**: `pio run` compila (validado pelo assistente de código). Gravação e
    monitor serial pelo usuário: confirmar boot, WiFi, WS conectado, tela idle
-   com caranguejo e heap livre estável.
+   com o mascote e heap livre estável.
 3. **Mic**: com o módulo ligado, modo de teste que mostra nível de áudio
    (VU) na tela ao segurar BtnA, antes de integrar com o backend.
 4. **Ponta a ponta**: backend rodando e Gray na mesma rede, segurar BtnA,
